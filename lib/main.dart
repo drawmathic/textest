@@ -342,7 +342,6 @@ class AppState extends ChangeNotifier {
 
   List<Question> getQuestionsBySubCategory(String cat, String subCat) => _questions.where((q) => q.category == cat && q.subCategory == subCat).toList();
 
-  // --- UPGRADED MULTI-CATEGORY TEXT PARSER ---
   Future<bool> importQuestionsFromString(String input) async {
     try {
       List<Question> newQs = [];
@@ -413,7 +412,6 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // Session / Active Test Logic
   void addSession(TestSession session) {
     _sessions.add(session);
     clearActiveState(session.category, session.subCategory);
@@ -433,7 +431,6 @@ class AppState extends ChangeNotifier {
   void clearActiveState(String cat, String subCat) { _activeStates.remove(_stateKey(cat, subCat)); saveUserData(); notifyListeners(); }
   bool isCompleted(String cat, String subCat) => _sessions.any((s) => s.category == cat && s.subCategory == subCat);
 
-  // Manipulators & Batch Handlers
   void renameCategory(String oldName, String newName) {
     for (var q in _questions) { if (q.category == oldName) q.category = newName; }
     for (var s in _sessions) { if (s.category == oldName) s.category = newName; } 
@@ -658,31 +655,75 @@ class ProfileScreen extends StatelessWidget {
 }
 
 // ==========================================
-// IMPORT SCREEN
+// IMPORT SCREEN (Updated Prompt with indenting fix)
 // ==========================================
 class ImportScreen extends StatelessWidget {
   const ImportScreen({super.key});
 
-  final String aiPrompt = '''You are an expert test creator. Generate a multiple-choice test about [TOPIC]. 
-You MUST strictly output the test using the exact plaintext format below. Do not use code blocks, JSON, or any conversational text.
+  final String aiPrompt = r'''You are an expert test creator. Generate a multiple-choice test about [TOPIC]. 
+
+You MUST strictly output the test using the exact plaintext format below. Do not use markdown wrappers, JSON, or any conversational text. Start your response immediately with @@CATEGORY@@.
+
+CRITICAL INSTRUCTIONS:
+
+1. HYBRID FORMATTING: The `@@MARKDOWN@@` block must contain a mix of Markdown and LaTeX. 
+
+2. TEXT: Use standard Markdown for text formatting (**bold**, *italics*, inline code). For block code, DO NOT use triple backticks. Instead, indent the code by exactly 4 spaces.
+
+3. MATH (NON-NEGOTIABLE): You MUST use standard LaTeX for all math. You are strictly required to use `$` for inline math (e.g., $x=2$) and `$$` for block math on their own lines (e.g., $$y=mx+b$$). Do not omit these delimiters under any circumstances.
+
+4. OPTIONS: Every question must have exactly 4 options.
+
+
+EXAMPLE EXPECTED OUTPUT FORMAT:
 
 @@CATEGORY@@
-[Broad Category]
+SYS_DIAGNOSTICS
 @@SUBCATEGORY@@
-[Specific Topic]
+STRESS_TEST_01
 ===BEGIN_QUESTION===
 @@MARKDOWN@@
-[Question text here. Use \$ for inline math and \$\$ for block math equations.]
+**Q1: Baseline Math & Markdown**
+Evaluate the quadratic formula rendering:
+
+$$x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$$
+
+What does the discriminant $\Delta = b^2 - 4ac$ indicate?
+
 @@OPT_A@@
-[Option A text]
+If $\Delta > 0$, there are two distinct real roots.
 @@OPT_B@@
-[Option B text]
+If $\Delta = 0$, there are complex roots.
 @@OPT_C@@
-[Option C text]
+It determines the $y$-intercept.
 @@OPT_D@@
-[Option D text]
+None of the above.
 @@ANSWER@@
-[Correct Letter: A, B, C, or D]
+A
+===END_QUESTION===
+===BEGIN_QUESTION===
+@@MARKDOWN@@
+**Q2: Code Blocks & Markdown Formatting**
+Look at the following Dart snippet:
+
+    void main() {
+      List<int> numbers = [1, 2, 3];
+      var doubled = numbers.map((n) => n * 2).toList();
+      print(doubled);
+    }
+
+What is the output?
+
+@@OPT_A@@
+[1, 2, 3]
+@@OPT_B@@
+[2, 4, 6]
+@@OPT_C@@
+Error
+@@OPT_D@@
+None of the above
+@@ANSWER@@
+B
 ===END_QUESTION===''';
 
   @override
@@ -918,7 +959,6 @@ class _ExamScreenState extends State<ExamScreen> {
     _saveState();
   }
 
-  // UPDATED: Now uses jumpToPage to prevent marking intermediate questions as "visited"
   void _goToIndex(int index) => _pageController.jumpToPage(index);
 
   void _updateStatusAndNext(QuestionStatus newStatus) {
@@ -1056,7 +1096,7 @@ class ResultScreen extends StatelessWidget {
               const Divider(height: 48),
               Text('SCORE: ${session.score} / ${session.totalQuestions}', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
               Text('ACCURACY: ${perc.toStringAsFixed(1)}%', style: const TextStyle(fontSize: 20)),
-              Text('TIME TAKEN: ${session.durationSeconds ~/ 60}M ${session.durationSeconds % 60}S', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              Text('TOTAL TIME: ${session.durationSeconds ~/ 60}M ${session.durationSeconds % 60}S', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               const SizedBox(height: 48),
               FilledButton(onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => SpecificAnalysisScreen(session: session))), child: const Text('INITIATE REVIEW')),
               const SizedBox(height: 16),
@@ -1079,6 +1119,36 @@ class SpecificAnalysisScreen extends StatefulWidget {
 class _SpecificAnalysisScreenState extends State<SpecificAnalysisScreen> {
   SortMode _sortMode = SortMode.defaultOrder;
 
+  void _copyResultsToClipboard() {
+    StringBuffer sb = StringBuffer();
+    double p = widget.session.totalQuestions > 0 ? (widget.session.score / widget.session.totalQuestions) * 100 : 0;
+    
+    sb.writeln('TEST REPORT: ${widget.session.category} > ${widget.session.subCategory}');
+    sb.writeln('SCORE: ${widget.session.score}/${widget.session.totalQuestions} (${p.toStringAsFixed(1)}%)');
+    sb.writeln('TOTAL TIME: ${widget.session.durationSeconds ~/ 60}M ${widget.session.durationSeconds % 60}S');
+    sb.writeln('--------------------------------------------------\n');
+
+    for (int i = 0; i < widget.session.questions.length; i++) {
+      var q = widget.session.questions[i];
+      var uAnsIdx = widget.session.userAnswers[q.id];
+      var isCor = uAnsIdx == q.correctAnswerIndex;
+      var time = widget.session.timePerQuestion[q.id] ?? 0;
+
+      sb.writeln('Q${i + 1}: ${q.text.replaceAll('\n', ' ')}');
+      sb.writeln('TIME TAKEN: ${time}s');
+      if (uAnsIdx == null) {
+        sb.writeln('STATUS: UNATTEMPTED');
+      } else {
+        sb.writeln('STATUS: ${isCor ? 'CORRECT' : 'INCORRECT'}');
+        sb.writeln('YOUR ANSWER: ${String.fromCharCode(65 + uAnsIdx)}. ${q.options[uAnsIdx].replaceAll('\n', ' ')}');
+      }
+      sb.writeln('CORRECT ANSWER: ${String.fromCharCode(65 + q.correctAnswerIndex)}. ${q.options[q.correctAnswerIndex].replaceAll('\n', ' ')}\n');
+    }
+
+    Clipboard.setData(ClipboardData(text: sb.toString()));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('RESULTS COPIED TO CLIPBOARD', style: TextStyle(fontWeight: FontWeight.bold)), backgroundColor: inkBlack));
+  }
+
   @override
   Widget build(BuildContext context) {
     List<Question> sortedQs = List.from(widget.session.questions);
@@ -1097,7 +1167,16 @@ class _SpecificAnalysisScreenState extends State<SpecificAnalysisScreen> {
     double avgTime = widget.session.totalQuestions > 0 ? (widget.session.durationSeconds / widget.session.totalQuestions) : 0;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('SPECIFIC_ANALYSIS_MATRIX')),
+      appBar: AppBar(
+        title: const Text('SPECIFIC_ANALYSIS_MATRIX'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.copy, color: Colors.black),
+            tooltip: 'COPY RESULTS',
+            onPressed: _copyResultsToClipboard,
+          )
+        ],
+      ),
       body: CustomScrollView(
         slivers: [
           SliverToBoxAdapter(
@@ -1110,6 +1189,7 @@ class _SpecificAnalysisScreenState extends State<SpecificAnalysisScreen> {
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('SCORE:'), Text('${widget.session.score}/${widget.session.totalQuestions}', style: const TextStyle(fontWeight: FontWeight.bold))]),
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('ACCURACY:'), Text('${perc.toStringAsFixed(1)}%', style: const TextStyle(fontWeight: FontWeight.bold))]),
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('AVG_TIME/Q:'), Text('${avgTime.toStringAsFixed(1)}s', style: const TextStyle(fontWeight: FontWeight.bold))]),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('TOTAL_TIME:'), Text('${widget.session.durationSeconds ~/ 60}M ${widget.session.durationSeconds % 60}S', style: const TextStyle(fontWeight: FontWeight.bold))]),
               ]),
             ),
           ),
@@ -1209,7 +1289,7 @@ class GlobalStatsTab extends StatelessWidget {
       double accuracy = totalQ > 0 ? (totalScore / totalQ) * 100 : 0;
       double avgTime = totalQ > 0 ? (totalTime / totalQ) : 0;
       barGroups.add(BarChartGroupData(x: xIndex++, barRods: [BarChartRodData(toY: accuracy, color: inkBlack, width: 24, borderRadius: BorderRadius.zero)]));
-      categoryLabels.add(cat); categoryStats.add({'cat': cat, 'acc': accuracy, 'avgTime': avgTime});
+      categoryLabels.add(cat); categoryStats.add({'cat': cat, 'acc': accuracy, 'avgTime': avgTime, 'totalTime': totalTime});
     });
 
     return SingleChildScrollView(
@@ -1231,7 +1311,9 @@ class GlobalStatsTab extends StatelessWidget {
         const SizedBox(height: 32), const Text('CATEGORY_BREAKDOWN', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)), const SizedBox(height: 16),
         ...categoryStats.map((stat) => Card(child: Padding(padding: const EdgeInsets.all(16.0), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(stat['cat'].toUpperCase(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)), const Divider(),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('ACCURACY: ${(stat['acc'] as double).toStringAsFixed(1)}%'), Text('AVG TIME/Q: ${(stat['avgTime'] as double).toStringAsFixed(1)}s')])
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('ACCURACY: ${(stat['acc'] as double).toStringAsFixed(1)}%'), Text('AVG TIME/Q: ${(stat['avgTime'] as double).toStringAsFixed(1)}s')]),
+          const SizedBox(height: 4),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('TOTAL TIME: ${(stat['totalTime'] as int) ~/ 60}M ${(stat['totalTime'] as int) % 60}S')]),
         ]))))
       ]),
     );
@@ -1292,7 +1374,7 @@ class _GlobalRecordsTabState extends State<GlobalRecordsTab> {
 }
 
 // ==========================================
-// ORGANIZE SCREEN (Upgraded with Multi-select)
+// ORGANIZE SCREEN
 // ==========================================
 class OrganizeScreen extends StatefulWidget {
   const OrganizeScreen({super.key});
