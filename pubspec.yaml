@@ -22,7 +22,7 @@ dev_dependencies:
 # Automated Icon Configuration
 flutter_launcher_icons:
   android: "ic_launcher"
-  ios: true
+  ios: false # <-- Changed this to false to prevent the iOS crash
   image_path: "assets/icon.png"
   min_sdk_android: 21
 
